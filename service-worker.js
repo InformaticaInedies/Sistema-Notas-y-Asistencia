@@ -1,4 +1,4 @@
-const CACHE = 'notas-inedies-v1';
+const CACHE = 'notas-inedies-v2';
 const ARCHIVOS = ['./', './index.html', './manifest.json'];
 
 self.addEventListener('install', e => {
