@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Notas y Asistencia - INEDIES</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1c4587">
+<style>
+  :root { --azul:#1c4587; --rojo:#c0392b; --naranja:#e67e22; --verde:#27ae60; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; margin:0; background:#fafafa; color:#222; }
+  header { background:var(--azul); color:white; padding:12px 16px; }
+  header h1 { font-size:16px; margin:0 0 8px 0; }
+  select, input, button { font-size:15px; padding:8px; border-radius:6px; border:1px solid #ccc; }
+  .fila-selectores { display:flex; gap:8px; flex-wrap:wrap; }
+  .fila-selectores select { flex:1; min-width:120px; }
+  .link-config { background:none; border:none; color:white; text-decoration:underline; font-size:12px; padding:4px 0; }
+  nav.tabs { display:flex; background:white; border-bottom:1px solid #ddd; }
+  nav.tabs button { flex:1; background:none; border:none; padding:12px; font-weight:bold; color:#666; border-radius:0; }
+  nav.tabs button.activo { color:var(--azul); border-bottom:3px solid var(--azul); }
+  main { padding:16px; padding-bottom:80px; }
+  .tab { display:none; }
+  .tab.activo { display:block; }
+  .estudiante { display:flex; align-items:center; justify-content:space-between; background:white; padding:10px 12px; border-radius:8px; margin-bottom:6px; border:1px solid #eee; }
+  .estudiante .nombre { flex:1; }
+  .estudiante .botones button { margin-left:4px; padding:6px 10px; font-size:13px; }
+  .btn-ausente.activo { background:var(--rojo); color:white; }
+  .btn-excusa.activo { background:var(--naranja); color:white; }
+  .estudiante input[type=number] { width:70px; }
+  .btn-primario { background:var(--azul); color:white; width:100%; padding:12px; font-size:16px; margin-top:12px; }
+  .btn-secundario { background:white; border:1px solid var(--azul); color:var(--azul); }
+  .aviso { padding:10px; border-radius:6px; margin-bottom:10px; font-size:14px; }
+  .aviso.offline { background:#fdecea; color:var(--rojo); }
+  .aviso.ok { background:#eafaf1; color:var(--verde); }
+  table { width:100%; border-collapse:collapse; background:white; }
+  th, td { text-align:left; padding:8px; border-bottom:1px solid #eee; font-size:13px; }
+  .campo { margin-bottom:10px; }
+  .campo label { display:block; font-size:13px; margin-bottom:4px; color:#555; }
+  .campo input, .campo select { width:100%; }
+  #pantallaConfig { padding:24px; max-width:400px; margin:0 auto; }
+</style>
+</head>
+<body>
+
+<div id="pantallaConfig" style="display:none;">
+  <h2>Configuración inicial</h2>
+  <p>Pega la URL de tu Apps Script (termina en /exec) y el token que definiste en Api.gs.</p>
+  <div class="campo"><label>URL de la API</label><input id="cfgUrl" type="text" placeholder="https://script.google.com/macros/s/.../exec"></div>
+  <div class="campo"><label>Token</label><input id="cfgToken" type="text"></div>
+  <button class="btn-primario" onclick="guardarConfig()">Guardar y continuar</button>
+</div>
+
+<div id="app" style="display:none;">
+  <header>
+    <h1>Notas y Asistencia - INEDIES</h1>
+    <div class="fila-selectores">
+      <select id="selCurso" onchange="cambiarCurso()"></select>
+      <select id="selPeriodo"></select>
+    </div>
+    <button class="link-config" onclick="reconfigurar()">Cambiar configuración de la API</button>
+  </header>
+
+  <nav class="tabs">
+    <button class="activo" onclick="mostrarTab('asistencia', this)">Asistencia</button>
+    <button onclick="mostrarTab('actividad', this)">Actividad</button>
+    <button onclick="mostrarTab('notas', this)">Notas</button>
+  </nav>
+
+  <main>
+    <div id="aviso"></div>
+
+    <div id="tab-asistencia" class="tab activo">
+      <div class="campo"><label>Fecha</label><input id="asisFecha" type="date"></div>
+      <div class="campo"><label>Tema de la clase (opcional)</label><input id="asisTema" type="text"></div>
+      <p style="font-size:13px;color:#666;">Marca solo a quien faltó o tiene excusa. El resto queda como presente.</p>
+      <div id="listaAsistencia"></div>
+      <button class="btn-primario" onclick="guardarAsistencia()">Guardar asistencia</button>
+    </div>
+
+    <div id="tab-actividad" class="tab">
+      <div class="campo"><label>Fecha</label><input id="actFecha" type="date"></div>
+      <div class="campo"><label>Tipo de actividad</label><select id="actTipo"></select></div>
+      <div class="campo"><label>Descripción</label><input id="actDescripcion" type="text"></div>
+      <div class="campo"><label>Nota máxima</label><input id="actNotaMax" type="number" value="5" step="0.1"></div>
+      <div id="listaActividad"></div>
+      <button class="btn-primario" onclick="guardarActividad()">Guardar actividad</button>
+    </div>
+
+    <div id="tab-notas" class="tab">
+      <button class="btn-primario btn-secundario" onclick="consultarNotas()">Consultar notas</button>
+      <div id="tablaNotas" style="margin-top:12px;overflow-x:auto;"></div>
+    </div>
+  </main>
+</div>
+
+<script>
+// ---------- ESTADO ----------
+let cfg = JSON.parse(localStorage.getItem('cfg') || 'null');
+let contexto = JSON.parse(localStorage.getItem('contexto') || 'null');
+let estudiantesCache = JSON.parse(localStorage.getItem('estudiantesCache') || '{}');
+let cola = JSON.parse(localStorage.getItem('cola') || '[]');
+let estudiantesActuales = [];
+let estadosAsistencia = {};
+
+// ---------- CONFIGURACIÓN ----------
+function guardarConfig() {
+  const url = 'https://script.google.com/macros/s/AKfycbxLBaEbxbJMifZQYPUyjCYmynWPafL9OUM6szKC4tdrCYcz6SyofGC5vsi0zGDZCBhc/exec';
+  const token = 'Inedies-2027-token-para-nuevo-sistema';
+  if (!url || !token) { alert('Completa los dos campos'); return; }
+  cfg = { url: url, token: token };
+  localStorage.setItem('cfg', JSON.stringify(cfg));
+  iniciar();
+}
+
+function reconfigurar() {
+  if (confirm('¿Borrar la URL y el token guardados?')) {
+    localStorage.removeItem('cfg');
+    location.reload();
+  }
+}
+
+// ---------- ARRANQUE ----------
+window.addEventListener('load', () => {
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('service-worker.js').catch(() => {});
+  if (!cfg) { document.getElementById('pantallaConfig').style.display = 'block'; }
+  else { iniciar(); }
+});
+window.addEventListener('online', sincronizarCola);
+
+async function iniciar() {
+  document.getElementById('pantallaConfig').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  document.getElementById('asisFecha').valueAsDate = new Date();
+  document.getElementById('actFecha').valueAsDate = new Date();
+
+  if (navigator.onLine) {
+    const r = await llamarApiDirecta('contexto', {});
+    if (r && r.ok) { contexto = r.datos; localStorage.setItem('contexto', JSON.stringify(contexto)); }
+  }
+  if (!contexto) { mostrarAviso('No hay conexión y aún no tienes datos guardados. Conéctate una vez para cargar cursos.', 'offline'); return; }
+
+  renderSelectores();
+  await cambiarCurso();
+  sincronizarCola();
+}
+
+function renderSelectores() {
+  document.getElementById('selCurso').innerHTML = contexto.cursos.map(c => `<option value="${c.id}">${c.nombre} (${c.anio})</option>`).join('');
+  document.getElementById('selPeriodo').innerHTML = contexto.periodos.map(p => `<option value="${p.id}">Periodo ${p.numero} - ${p.anio}</option>`).join('');
+  document.getElementById('actTipo').innerHTML = contexto.tipos.map(t => `<option value="${t.id}">${t.nombre}</option>`).join('');
+}
+
+// ---------- ESTUDIANTES ----------
+async function cambiarCurso() {
+  const idCurso = document.getElementById('selCurso').value;
+  if (!idCurso) return;
+
+  if (!navigator.onLine && estudiantesCache[idCurso]) {
+    estudiantesActuales = estudiantesCache[idCurso];
+  } else {
+    const r = await llamarApiDirecta('estudiantes', { idCurso: idCurso });
+    if (r && r.ok) {
+      estudiantesActuales = r.datos;
+      estudiantesCache[idCurso] = r.datos;
+      localStorage.setItem('estudiantesCache', JSON.stringify(estudiantesCache));
+    } else {
+      estudiantesActuales = estudiantesCache[idCurso] || [];
+    }
+  }
+  estadosAsistencia = {};
+  renderListaAsistencia();
+  renderListaActividad();
+}
+
+function renderListaAsistencia() {
+  document.getElementById('listaAsistencia').innerHTML = estudiantesActuales.map(e => `
+    <div class="estudiante">
+      <span class="nombre">${e.nombre}</span>
+      <span class="botones">
+        <button class="btn-ausente" id="btnA-${e.id}" onclick="marcar('${e.id}','Ausente')">Ausente</button>
+        <button class="btn-excusa" id="btnE-${e.id}" onclick="marcar('${e.id}','Excusa')">Excusa</button>
+      </span>
+    </div>`).join('');
+}
+
+function marcar(idEst, estado) {
+  if (estadosAsistencia[idEst] === estado) delete estadosAsistencia[idEst];
+  else estadosAsistencia[idEst] = estado;
+  document.getElementById('btnA-' + idEst).className = 'btn-ausente' + (estadosAsistencia[idEst] === 'Ausente' ? ' activo' : '');
+  document.getElementById('btnE-' + idEst).className = 'btn-excusa' + (estadosAsistencia[idEst] === 'Excusa' ? ' activo' : '');
+}
+
+function renderListaActividad() {
+  document.getElementById('listaActividad').innerHTML = estudiantesActuales.map(e => `
+    <div class="estudiante">
+      <span class="nombre">${e.nombre}</span>
+      <input type="number" step="0.1" min="0" id="nota-${e.id}">
+    </div>`).join('');
+}
+
+// ---------- GUARDAR ----------
+async function guardarAsistencia() {
+  const idCurso = document.getElementById('selCurso').value;
+  const fecha = document.getElementById('asisFecha').value;
+  const tema = document.getElementById('asisTema').value;
+  const ausentes = Object.keys(estadosAsistencia).map(id => ({ idEstudiante: id, estado: estadosAsistencia[id] }));
+
+  const r = await llamarApi('tomarAsistencia', { idCurso: idCurso, fecha: fecha, tema: tema, ausentes: ausentes });
+  if (r.offline) { mostrarAviso('Sin conexión: la asistencia quedó guardada y se enviará automáticamente.', 'offline'); }
+  else if (r.ok) { mostrarAviso('Asistencia registrada (' + ausentes.length + ' con novedad).', 'ok'); estadosAsistencia = {}; renderListaAsistencia(); }
+  else { mostrarAviso('Error: ' + r.error, 'offline'); }
+}
+
+async function guardarActividad() {
+  const idCurso = document.getElementById('selCurso').value;
+  const fecha = document.getElementById('actFecha').value;
+  const idTipo = document.getElementById('actTipo').value;
+  const descripcion = document.getElementById('actDescripcion').value;
+  const notaMaxima = Number(document.getElementById('actNotaMax').value) || 5;
+  const calificaciones = estudiantesActuales
+    .map(e => ({ idEstudiante: e.id, nota: document.getElementById('nota-' + e.id).value }))
+    .filter(c => c.nota !== '');
+
+  const r = await llamarApi('registrarActividad', { idCurso: idCurso, fecha: fecha, idTipo: idTipo, descripcion: descripcion, notaMaxima: notaMaxima, calificaciones: calificaciones });
+  if (r.offline) { mostrarAviso('Sin conexión: la actividad quedó guardada y se enviará automáticamente.', 'offline'); }
+  else if (r.ok) { mostrarAviso('Actividad registrada (' + calificaciones.length + ' notas).', 'ok'); document.getElementById('actDescripcion').value = ''; renderListaActividad(); }
+  else { mostrarAviso('Error: ' + r.error, 'offline'); }
+}
+
+async function consultarNotas() {
+  const idCurso = document.getElementById('selCurso').value;
+  const idPeriodo = document.getElementById('selPeriodo').value;
+  const cont = document.getElementById('tablaNotas');
+  const r = await llamarApiDirecta('consultarNotas', { idCurso: idCurso, idPeriodo: idPeriodo });
+  if (!r || !r.ok) { cont.innerHTML = '<p>No hay conexión para consultar notas.</p>'; return; }
+  if (r.datos.length === 0) { cont.innerHTML = '<p>Sin notas calculadas todavía para este curso y periodo.</p>'; return; }
+  cont.innerHTML = '<table><tr><th>Estudiante</th><th>Act.</th><th>Cog.</th><th>Proc.</th><th>Sistema</th><th>Desempeño</th></tr>' +
+    r.datos.map(n => `<tr><td>${n.nombre}</td><td>${n.actitudinal}</td><td>${n.cognitivo}</td><td>${n.procedimental}</td><td>${n.notaSistema}</td><td>${n.desempeno}</td></tr>`).join('') +
+    '</table>';
+}
+
+// ---------- RED / COLA OFFLINE ----------
+async function llamarApiDirecta(accion, datos) {
+  try {
+    const resp = await fetch(cfg.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(Object.assign({ token: cfg.token, accion: accion }, datos))
+    });
+    return await resp.json();
+  } catch (err) {
+    return null;
+  }
+}
+
+async function llamarApi(accion, datos) {
+  if (!navigator.onLine) { encolar(accion, datos); return { offline: true }; }
+  const r = await llamarApiDirecta(accion, datos);
+  if (!r) { encolar(accion, datos); return { offline: true }; }
+  return r;
+}
+
+function encolar(accion, datos) {
+  cola.push({ accion: accion, datos: datos });
+  localStorage.setItem('cola', JSON.stringify(cola));
+}
+
+async function sincronizarCola() {
+  if (!cfg || cola.length === 0 || !navigator.onLine) return;
+  const pendientes = cola.slice();
+  cola = [];
+  for (const item of pendientes) {
+    const r = await llamarApiDirecta(item.accion, item.datos);
+    if (!r || !r.ok) cola.push(item);
+  }
+  localStorage.setItem('cola', JSON.stringify(cola));
+  if (cola.length === 0 && pendientes.length > 0) mostrarAviso('Sincronizado: todo lo pendiente ya se guardó.', 'ok');
+}
+
+// ---------- UI ----------
+function mostrarTab(nombre, btn) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('activo'));
+  document.getElementById('tab-' + nombre).classList.add('activo');
+  document.querySelectorAll('nav.tabs button').forEach(b => b.classList.remove('activo'));
+  btn.classList.add('activo');
+}
+
+let avisoTimeout;
+function mostrarAviso(texto, tipo) {
+  const el = document.getElementById('aviso');
+  el.className = 'aviso ' + tipo;
+  el.textContent = texto;
+  clearTimeout(avisoTimeout);
+  avisoTimeout = setTimeout(() => { el.textContent = ''; el.className = ''; }, 5000);
+}
+</script>
+</body>
+</html>
