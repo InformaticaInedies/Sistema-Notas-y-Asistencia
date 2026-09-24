@@ -30,9 +30,10 @@
   .estudiante input[type=number] { width:70px; }
   .btn-primario { background:var(--azul); color:white; width:100%; padding:12px; font-size:16px; margin-top:12px; }
   .btn-secundario { background:white; border:1px solid var(--azul); color:var(--azul); }
-  .aviso { padding:10px; border-radius:6px; margin-bottom:10px; font-size:14px; }
+  .aviso { position:fixed; left:16px; right:16px; bottom:16px; z-index:1000; padding:12px; border-radius:8px; font-size:14px; box-shadow:0 2px 10px rgba(0,0,0,0.2); }
   .aviso.offline { background:#fdecea; color:var(--rojo); }
   .aviso.ok { background:#eafaf1; color:var(--verde); }
+  .btn-primario:disabled { opacity:0.7; }
   table { width:100%; border-collapse:collapse; background:white; }
   th, td { text-align:left; padding:8px; border-bottom:1px solid #eee; font-size:13px; }
   .campo { margin-bottom:10px; }
@@ -75,7 +76,7 @@
       <div class="campo"><label>Tema de la clase (opcional)</label><input id="asisTema" type="text"></div>
       <p style="font-size:13px;color:#666;">Marca solo a quien faltó o tiene excusa. El resto queda como presente.</p>
       <div id="listaAsistencia"></div>
-      <button class="btn-primario" onclick="guardarAsistencia()">Guardar asistencia</button>
+      <button class="btn-primario" onclick="guardarAsistencia(this)">Guardar asistencia</button>
     </div>
 
     <div id="tab-actividad" class="tab">
@@ -84,7 +85,7 @@
       <div class="campo"><label>Descripción</label><input id="actDescripcion" type="text"></div>
       <div class="campo"><label>Nota máxima</label><input id="actNotaMax" type="number" value="5" step="0.1"></div>
       <div id="listaActividad"></div>
-      <button class="btn-primario" onclick="guardarActividad()">Guardar actividad</button>
+      <button class="btn-primario" onclick="guardarActividad(this)">Guardar actividad</button>
     </div>
 
     <div id="tab-notas" class="tab">
@@ -105,8 +106,8 @@ let estadosAsistencia = {};
 
 // ---------- CONFIGURACIÓN ----------
 function guardarConfig() {
-  const url = 'https://script.google.com/macros/s/AKfycbxLBaEbxbJMifZQYPUyjCYmynWPafL9OUM6szKC4tdrCYcz6SyofGC5vsi0zGDZCBhc/exec';
-  const token = 'Inedies-2027-token-para-nuevo-sistema';
+  const url = document.getElementById('cfgUrl').value.trim();
+  const token = document.getElementById('cfgToken').value.trim();
   if (!url || !token) { alert('Completa los dos campos'); return; }
   cfg = { url: url, token: token };
   localStorage.setItem('cfg', JSON.stringify(cfg));
@@ -200,32 +201,48 @@ function renderListaActividad() {
 }
 
 // ---------- GUARDAR ----------
-async function guardarAsistencia() {
-  const idCurso = document.getElementById('selCurso').value;
-  const fecha = document.getElementById('asisFecha').value;
-  const tema = document.getElementById('asisTema').value;
-  const ausentes = Object.keys(estadosAsistencia).map(id => ({ idEstudiante: id, estado: estadosAsistencia[id] }));
+async function guardarAsistencia(btn) {
+  const textoOriginal = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Guardando...';
+  try {
+    const idCurso = document.getElementById('selCurso').value;
+    const fecha = document.getElementById('asisFecha').value;
+    const tema = document.getElementById('asisTema').value;
+    const ausentes = Object.keys(estadosAsistencia).map(id => ({ idEstudiante: id, estado: estadosAsistencia[id] }));
 
-  const r = await llamarApi('tomarAsistencia', { idCurso: idCurso, fecha: fecha, tema: tema, ausentes: ausentes });
-  if (r.offline) { mostrarAviso('Sin conexión: la asistencia quedó guardada y se enviará automáticamente.', 'offline'); }
-  else if (r.ok) { mostrarAviso('Asistencia registrada (' + ausentes.length + ' con novedad).', 'ok'); estadosAsistencia = {}; renderListaAsistencia(); }
-  else { mostrarAviso('Error: ' + r.error, 'offline'); }
+    const r = await llamarApi('tomarAsistencia', { idCurso: idCurso, fecha: fecha, tema: tema, ausentes: ausentes });
+    if (r.offline) { mostrarAviso('Sin conexión: la asistencia quedó guardada y se enviará automáticamente.', 'offline'); }
+    else if (r.ok) { mostrarAviso('Asistencia registrada (' + ausentes.length + ' con novedad).', 'ok'); estadosAsistencia = {}; renderListaAsistencia(); }
+    else { mostrarAviso('Error: ' + r.error, 'offline'); }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = textoOriginal;
+  }
 }
 
-async function guardarActividad() {
-  const idCurso = document.getElementById('selCurso').value;
-  const fecha = document.getElementById('actFecha').value;
-  const idTipo = document.getElementById('actTipo').value;
-  const descripcion = document.getElementById('actDescripcion').value;
-  const notaMaxima = Number(document.getElementById('actNotaMax').value) || 5;
-  const calificaciones = estudiantesActuales
-    .map(e => ({ idEstudiante: e.id, nota: document.getElementById('nota-' + e.id).value }))
-    .filter(c => c.nota !== '');
+async function guardarActividad(btn) {
+  const textoOriginal = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Guardando...';
+  try {
+    const idCurso = document.getElementById('selCurso').value;
+    const fecha = document.getElementById('actFecha').value;
+    const idTipo = document.getElementById('actTipo').value;
+    const descripcion = document.getElementById('actDescripcion').value;
+    const notaMaxima = Number(document.getElementById('actNotaMax').value) || 5;
+    const calificaciones = estudiantesActuales
+      .map(e => ({ idEstudiante: e.id, nota: document.getElementById('nota-' + e.id).value }))
+      .filter(c => c.nota !== '');
 
-  const r = await llamarApi('registrarActividad', { idCurso: idCurso, fecha: fecha, idTipo: idTipo, descripcion: descripcion, notaMaxima: notaMaxima, calificaciones: calificaciones });
-  if (r.offline) { mostrarAviso('Sin conexión: la actividad quedó guardada y se enviará automáticamente.', 'offline'); }
-  else if (r.ok) { mostrarAviso('Actividad registrada (' + calificaciones.length + ' notas).', 'ok'); document.getElementById('actDescripcion').value = ''; renderListaActividad(); }
-  else { mostrarAviso('Error: ' + r.error, 'offline'); }
+    const r = await llamarApi('registrarActividad', { idCurso: idCurso, fecha: fecha, idTipo: idTipo, descripcion: descripcion, notaMaxima: notaMaxima, calificaciones: calificaciones });
+    if (r.offline) { mostrarAviso('Sin conexión: la actividad quedó guardada y se enviará automáticamente.', 'offline'); }
+    else if (r.ok) { mostrarAviso('Actividad registrada (' + calificaciones.length + ' notas).', 'ok'); document.getElementById('actDescripcion').value = ''; renderListaActividad(); }
+    else { mostrarAviso('Error: ' + r.error, 'offline'); }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = textoOriginal;
+  }
 }
 
 async function consultarNotas() {
